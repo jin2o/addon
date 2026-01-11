@@ -1,0 +1,120 @@
+name: Sync Upstream and Apply Optimizations
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  sync-and-optimize:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Fork
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Action Bot"
+          git config user.email "action@github.com"
+
+      - name: Add Upstream Remote
+        run: |
+          git remote add upstream https://github.com/stream4me/addon.git || true
+
+      - name: Fetch Upstream
+        run: |
+          git fetch upstream master
+
+      - name: Check for Upstream Changes
+        id: check
+        run: |
+          UPSTREAM_COMMIT=$(git rev-parse upstream/master)
+          echo "Upstream commit: $UPSTREAM_COMMIT"
+          
+          echo "Saving custom files..."
+          mkdir -p /tmp/custom_backup
+          
+          cp platformcode/fallback_player.py /tmp/custom_backup/ 2>/dev/null || echo "fallback_player.py not found"
+          cp platformcode/launcher.py /tmp/custom_backup/ 2>/dev/null || echo "launcher.py not found"
+          cp platformcode/platformtools.py /tmp/custom_backup/ 2>/dev/null || echo "platformtools.py not found"
+          cp platformcode/updater.py /tmp/custom_backup/ 2>/dev/null || echo "updater.py not found"
+          cp platformcode/channel_utils.py /tmp/custom_backup/ 2>/dev/null || echo "channel_utils.py not found"
+          cp resources/settings.xml /tmp/custom_backup/ 2>/dev/null || echo "settings.xml not found"
+          cp .github/workflows/sync-upstream.yml /tmp/custom_backup/ 2>/dev/null || echo "sync-upstream.yml not found"
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+
+      - name: Reset to Upstream
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          echo "Resetting to upstream/master..."
+          git reset --hard upstream/master
+          echo "Reset complete"
+
+      - name: Fix Upstream Workflows
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          echo "Fixing upstream workflow files..."
+          for file in .github/workflows/updateDomains.yml .github/workflows/updateDomainsStable.yml; do
+            if [ -f "$file" ]; then
+              # Controlla se usa actions-js/push ma non ha github_token
+              if grep -q "actions-js/push" "$file" && ! grep -q "github_token:" "$file"; then
+                # Inserisce with: e github_token dopo la riga con actions-js/push
+                sed -i '/uses: actions-js\/push/a\        with:\n          github_token: ${{ secrets.GITHUB_TOKEN }}' "$file"
+                echo "Fixed: $file"
+              else
+                echo "Already fixed or not needed: $file"
+              fi
+            else
+              echo "File not found: $file"
+            fi
+          done
+
+      - name: Restore Custom Files
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          echo "Restoring custom files..."
+          
+          cp /tmp/custom_backup/fallback_player.py platformcode/ 2>/dev/null || echo "fallback_player.py not in backup"
+          cp /tmp/custom_backup/launcher.py platformcode/ 2>/dev/null || echo "launcher.py not in backup"
+          cp /tmp/custom_backup/platformtools.py platformcode/ 2>/dev/null || echo "platformtools.py not in backup"
+          cp /tmp/custom_backup/updater.py platformcode/ 2>/dev/null || echo "updater.py not in backup"
+          cp /tmp/custom_backup/channel_utils.py platformcode/ 2>/dev/null || echo "channel_utils.py not in backup"
+          cp /tmp/custom_backup/settings.xml resources/ 2>/dev/null || echo "settings.xml not in backup"
+          
+          mkdir -p .github/workflows
+          cp /tmp/custom_backup/sync-upstream.yml .github/workflows/ 2>/dev/null || echo "sync-upstream.yml not in backup"
+          
+          echo "Custom files restored"
+
+      - name: Commit Changes
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -m "Sync with upstream master + apply jin2o customizations"
+
+      - name: Update Provider Name
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          if ! grep -q "jin2o" addon.xml; then
+            sed -i 's/provider-name="S4Me Team"/provider-name="S4Me Team (Optimized by jin2o)"/' addon.xml
+            git add addon.xml
+            git diff --cached --quiet || git commit -m "Mark as optimized fork"
+          fi
+
+      - name: Push Changes
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          git push origin master --force
+
+      - name: Summary
+        run: |
+          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Fork: jin2o/addon" >> $GITHUB_STEP_SUMMARY
+          echo "- Upstream: stream4me/addon (master branch)" >> $GITHUB_STEP_SUMMARY
+          echo "- Strategy: Reset to upstream + fix workflows + restore custom files" >> $GITHUB_STEP_SUMMARY
