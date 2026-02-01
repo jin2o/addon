@@ -38,6 +38,90 @@ xbmc_player = xbmc.Player()
 play_canceled = False
 
 
+def auto_enable_forced_italian_subtitles():
+    """
+    Automatically enables forced Italian subtitles when available.
+    Should be called in a separate thread after playback starts.
+    """
+    import time
+    import json
+    
+    # Wait for playback to start (max 15 seconds)
+    for _ in range(30):
+        if xbmc_player.isPlaying():
+            break
+        time.sleep(0.5)
+    else:
+        logger.debug('[S4ME] Playback did not start, skipping forced subtitle check')
+        return
+    
+    # Wait a bit for subtitle streams to be available
+    time.sleep(2)
+    
+    try:
+        # Get available subtitle streams using JSON-RPC
+        result = xbmc.executeJSONRPC(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "Player.GetProperties",
+            "params": {
+                "playerid": 1,
+                "properties": ["subtitles", "currentsubtitle", "subtitleenabled"]
+            },
+            "id": 1
+        }))
+        
+        data = json.loads(result)
+        
+        if 'result' not in data:
+            logger.debug('[S4ME] No subtitle data available')
+            return
+        
+        subtitles = data['result'].get('subtitles', [])
+        current_subtitle = data['result'].get('currentsubtitle', {})
+        subtitle_enabled = data['result'].get('subtitleenabled', False)
+        
+        logger.info(f'[S4ME] Available subtitles: {len(subtitles)}')
+        
+        # Search for forced Italian subtitle
+        forced_italian_index = None
+        
+        for i, sub in enumerate(subtitles):
+            sub_name = sub.get('name', '').lower()
+            sub_lang = sub.get('language', '').lower()
+            is_forced = sub.get('isforced', False)
+            
+            logger.debug(f'[S4ME] Subtitle {i}: name="{sub_name}", lang="{sub_lang}", forced={is_forced}')
+            
+            # Check if it's forced Italian
+            is_italian = 'ita' in sub_lang or 'italian' in sub_lang or 'ita' in sub_name or 'italian' in sub_name
+            is_forced_check = is_forced or 'forced' in sub_name or 'forzat' in sub_name
+            
+            if is_italian and is_forced_check:
+                forced_italian_index = i
+                logger.info(f'[S4ME] Found forced Italian subtitle at index {i}: {sub_name}')
+                break
+        
+        # Enable forced Italian subtitle if found
+        if forced_italian_index is not None:
+            # Enable subtitles
+            xbmc.executeJSONRPC(json.dumps({
+                "jsonrpc": "2.0",
+                "method": "Player.SetSubtitle",
+                "params": {
+                    "playerid": 1,
+                    "subtitle": forced_italian_index,
+                    "enable": True
+                },
+                "id": 1
+            }))
+            logger.info(f'[S4ME] Enabled forced Italian subtitle at index {forced_italian_index}')
+        else:
+            logger.debug('[S4ME] No forced Italian subtitle found')
+            
+    except Exception as e:
+        logger.error(f'[S4ME] Error checking forced subtitles: {e}')
+
+
 def dialog_ok(heading, message):
     dialog = xbmcgui.Dialog()
     return dialog.ok(heading, message)
@@ -1525,14 +1609,28 @@ def set_player(item, xlistitem, mediaurl, view, strm):
             # Reproduce
             xbmc_player.play(playlist, xlistitem)
             add_next_to_playlist(item)
+            
+            # Auto-enable forced Italian subtitles
+            import threading
+            t = threading.Thread(target=auto_enable_forced_italian_subtitles)
+            t.daemon = True
+            t.start()
 
             if config.get_setting('trakt_sync'):
                 from core import trakt_tools
                 trakt_tools.wait_for_update_trakt()
 
+
         elif player_mode == 2:
             logger.info('Player Mode: Built-In')
             xbmc.executebuiltin("PlayMedia(" + mediaurl + ")")
+            
+            # Auto-enable forced Italian subtitles
+            import threading
+            t = threading.Thread(target=auto_enable_forced_italian_subtitles)
+            t.daemon = True
+            t.start()
+
 
         elif player_mode == 3:
             logger.info('Player Mode: Download and Play')
