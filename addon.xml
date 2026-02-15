@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.s4me" name="Stream4Me BETA" version="1.7.8" provider-name="S4Me Team">
+<addon id="plugin.video.s4me" name="Stream4Me BETA" version="1.7.8" provider-name="S4Me Team (Optimized by jin2o)">
   <requires>
     <!-- <import addon="script.module.libtorrent" optional="true"/> -->
     <import addon="metadata.themoviedb.org" optional="true"/>
