@@ -1,0 +1,28 @@
+2026-03-15 16:24:34.529 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:609]:  Seeking Movie: 'anaconda' (1997)
+2026-03-15 16:24:34.529 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda' (2025) vs 'anaconda' (1997) | Diff: 28
+2026-03-15 16:24:34.529 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:34.529 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda' (2025) vs 'anaconda' (1997) | Diff: 28
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda alla ricerca dellorchidea maledetta' (2004) vs 'anaconda' (1997) | Diff: 7
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda 3 la nuova stirpe' (2008) vs 'anaconda' (1997) | Diff: 11
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda 4 sentiero di sangue' (2009) vs 'anaconda' (1997) | Diff: 12
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:34.530 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:677]:  -> NO MATCH FOUND
+2026-03-15 16:24:35.474 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:609]:  Seeking Movie: 'anaconda' (1997)
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda' (2025) vs 'anaconda' (1997) | Diff: 28
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'lake placid vs anaconda' (2015) vs 'anaconda' (1997) | Diff: 18
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda alla ricerca dellorchidea maledetta' (2004) vs 'anaconda' (1997) | Diff: 7
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda 4 sentiero di sangue' (2009) vs 'anaconda' (1997) | Diff: 12
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda 3 la nuova stirpe' (2008) vs 'anaconda' (1997) | Diff: 11
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:634]:  -> REJECT: Year mismatch
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda' (1997) vs 'anaconda' (1997) | Diff: 0
+2026-03-15 16:24:35.475 T:2672     info <general>: s4me[fallback_player.find_best_movie_match:640]:  -> MATCH EXACT TITLE+YEAR
+2026-03-15 16:24:39.956 T:2028     info <general>: s4me[fallback_player.find_best_movie_match:609]:  Seeking Movie: 'anaconda' (2025)
+2026-03-15 16:24:39.957 T:2028     info <general>: s4me[fallback_player.find_best_movie_match:629]:  CHECK CANDIDATE: 'anaconda' (2025) vs 'anaconda' (2025) | Diff: 0
+2026-03-15 16:24:39.957 T:2028     info <general>: s4me[fallback_player.find_best_movie_match:640]:  -> MATCH EXACT TITLE+YEAR
