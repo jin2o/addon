@@ -36,8 +36,10 @@ jobs:
           cp resources/settings.xml /tmp/custom_backup/ 2>/dev/null || true
           cp -r .github/workflows /tmp/custom_backup/ 2>/dev/null || true
 
-      - name: Reset to Upstream
-        run: git reset --hard upstream/master
+      - name: Merge Upstream Changes
+        run: |
+          # Merge upstream keeping our files on conflict
+          git merge upstream/master --no-edit --strategy-option=ours || true
 
       - name: Restore Custom Files
         run: |
@@ -55,4 +57,4 @@ jobs:
         run: |
           git add -A
           git diff --cached --quiet || git commit -m "Sync with upstream + restore jin2o customizations"
-          git push origin master --force
+          git push origin master
