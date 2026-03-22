@@ -39,7 +39,7 @@ jobs:
       - name: Merge Upstream Changes
         run: |
           # Merge upstream prioritizing upstream changes (e.g. new channels)
-          git merge upstream/master --no-edit --strategy-option=theirs || true
+          git merge upstream/master --allow-unrelated-histories --no-edit --strategy-option=theirs || true
 
       - name: Restore Custom Files
         run: |
