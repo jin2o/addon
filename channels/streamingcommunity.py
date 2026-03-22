@@ -190,11 +190,11 @@ def makeItem(n, it, item):
     itm.contentType = it['type'].replace('tv', 'tvshow')
     itm.language = lang
     itm.year = ''
-    
+
     air_date = it.get('release_date') or it.get('last_air_date')
     if air_date:
         itm.year = air_date.split('-')[0]
-        
+
     if getattr(item, 'fast_search', False) and not itm.year:
         try:
             url_to_fetch = host + '/it/watch/%s' % it['id'] if itm.contentType == 'movie' else host + '/it/titles/%s-%s' % (it['id'], it.get('slug', ''))
@@ -215,6 +215,7 @@ def makeItem(n, it, item):
                             itm.year = real_air_date.split('-')[0]
         except Exception as e:
             logger.error('Error fetching real year streamingcommunity: ' + str(e))
+
 
     if itm.contentType == 'movie':
         # itm.contentType = 'movie'
