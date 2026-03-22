@@ -94,11 +94,11 @@ def process_request_proxy(url):
                 if logger:
                     logger.debug(url_request_proxy)
 
-        data = re.sub('\s(\w+)=(?!")([^<>\s]+)', r' \1="\2"', data)
-        data = re.sub('https://translate\.googleusercontent\.com/.*?u=(.*?)&amp;usg=[A-Za-z0-9_-]+', '\\1', data)
-        data = re.sub('https?://[a-zA-Z0-9-]*' + domain.replace('.', '-') + '\.translate\.goog(/[a-zA-Z0-9#/-]+)', 'https://' + domain + '\\1', data)
-        data = re.sub('\s+<', '<', data)
-        data = re.sub('https://translate\.google\.com/website\?[^ ]+u=', '', data)
+        data = re.sub(r'\s(\w+)=(?!")([^<>\s]+)', r' \1="\2"', data)
+        data = re.sub(r'https://translate\.googleusercontent\.com/.*?u=(.*?)&amp;usg=[A-Za-z0-9_-]+', r'\1', data)
+        data = re.sub(r'https?://[a-zA-Z0-9-]*' + domain.replace('.', '-') + r'\.translate\.goog(/[a-zA-Z0-9#/-]+)', 'https://' + domain + r'\1', data)
+        data = re.sub(r'\s+<', '<', data)
+        data = re.sub(r'https://translate\.google\.com/website\?[^ ]+u=', '', data)
         data = data.replace('&amp;', '&').replace('https://translate.google.com/website?sl=' + SL + '&tl=' + TL + '&ajax=1&u=', '')
 
         return {'url': url.strip(), 'result': result, 'data': data}
