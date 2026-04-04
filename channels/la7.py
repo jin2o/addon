@@ -7,6 +7,7 @@ import sys
 from core import support, httptools
 from platformcode import logger
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote_plus
 import html
 import json
 import ssl
@@ -41,10 +42,12 @@ def mainlist(item):
             ('Replay {bold}', ['', 'replay_channels'])]
 
     menu = [('Programmi TV {bullet bold}', ['/tutti-i-programmi', 'peliculas', '', 'tvshow']),
-            ('Teche La7 {bullet bold}', ['/la7teche', 'peliculas', '', 'tvshow'])]
+            ('Teche La7 {bullet bold}', ['/la7teche', 'peliculas', '', 'tvshow']),
+            ('Film La7Cinema {bullet bold}', ['/la7-cinema-tutti-i-film/rivedila7', 'episodios', '', 'peliculas'])]
 
     search = ''
     return locals()
+
 
 def live(item):
     la7live_item = item.clone(title=support.typo('La7', 'bold'), fulltitle='La7', url= host + '/dirette-tv', action='findvideos', forcethumb = True, no_return=True)
@@ -78,7 +81,7 @@ def replay_channels(item):
 @support.scrape
 def replay_menu(item):
     action = 'replay'
-    patron = r'href="(?P<url>[^"]+)"><div class="giorno-text">\s*(?P<day>[^>]+)</div><[^>]+>\s*(?P<num>[^<]+)</div><[^>]+>\s*(?P<month>[^<]+)<'
+    patron = r'href="(?P<url>[^"]+)">\s*<div class="giorno-text">\s*(?P<day>[^<]+)</div>\s*<div class="giorno-numero">\s*(?P<num>[^<]+)</div>\s*<div class="giorno-mese">\s*(?P<month>[^<]+)</div>'
     def itemHook(item):
         item.title = support.typo(item.day + ' ' + item.num + ' ' + item.month,'bold')
         return item
@@ -88,7 +91,7 @@ def replay_menu(item):
 @support.scrape
 def replay(item):
     action = 'findvideos'
-    patron = r'guida-tv"><[^>]+><[^>]+>(?P<hour>[^<]+)<[^>]+><[^>]+><[^>]+>\s*<a href="(?P<url>[^"]+)"><[^>]+><div class="[^"]+" data-background-image="(?P<t>[^"]+)"><[^>]+><[^>]+><[^>]+><[^>]+>\s*(?P<name>[^<]+)<[^>]+><[^>]+><[^>]+>(?P<plot>[^<]+)<'
+    patron = r'<div class="orario">(?P<hour>[^<]+)</div>.*?<a href="(?P<url>[^"]+)">.*?data-background-image="(?P<t>[^"]+)".*?<h2>\s*(?P<name>[^<]+)\s*</h2>.*?<div class="occhiello">\s*(?P<plot>[^<]+)\s*</div>'
     def itemHook(item):
         item.title = support.typo(item.hour + ' - ' + item.name,'bold')
         item.contentTitle = item.fulltitle = item.show = item.name
@@ -98,16 +101,79 @@ def replay(item):
         return item
     return locals()
 
+
+def clean_title(t):
+    t = html.unescape(t)
+    t = t.replace("\xa0", " ")
+    t = " ".join(t.split())
+    return t
+
+
 def search(item, text):
-    item.url = host + '/tutti-i-programmi'
-    item.search = text
-    try:
-        return peliculas(item)
-    except:
-        import sys
-        for line in sys.exc_info():
-            support.info('search log:', line)
+    if hasattr(item, "search") and item.search:
+        text = item.search
+
+    query = str(text).strip()
+    if not query:
         return []
+
+    raw_page = getattr(item, "page", 0)
+    try:
+        page = int(raw_page)
+    except:
+        page = 0
+
+    encoded = quote_plus(query)
+    url = f"{host}/ricerca?query={encoded}&page={page}"
+    html_data = httptools.downloadpage(url).data
+
+    if '<div class="view-content">' in html_data:
+        html_results = html_data.split('<div class="view-content">')[-1]
+        html_results = html_results.split('<div class="pager pagerBottom"', 1)[0]
+    else:
+        html_results = html_data
+
+    patron = r'<a href="(?P<url>/[^"]+)"[^>]*>\s*<div class="holder-bg">.*?data-background-image="(?P<thumb>[^"]+)".*?<div class="title[^"]*">\s*(?P<title>[^<]+)\s*</div>'
+    match = support.match(html_results, patron=patron)
+    results = match.matches
+
+    itemlist = []
+    seen = set()
+
+    for url, thumb, title in results:
+        if url in seen:
+            continue
+        seen.add(url)
+
+        title = clean_title(title)
+        fullurl = host + url
+        if thumb.startswith("//"):
+            thumb = "https:" + thumb
+
+        it = item.clone(
+            title=support.typo(title, 'bold'),
+            fulltitle=title,
+            show=title,
+            url=fullurl,
+            thumbnail=thumb,
+            fanart=thumb,
+            action="findvideos"
+        )
+        itemlist.append(it)
+
+    if f'query={encoded}&amp;page={page+1}' in html_data:
+        next_item = item.clone(
+            search=query,
+            page=page+1,
+            url=host
+        )
+        support.nextPage(itemlist, next_item, function_or_level='search_page')
+
+    return itemlist
+
+
+def search_page(item):
+    return search(item, item.search)
 
 
 def peliculas(item):
@@ -229,75 +295,78 @@ def episodios(item):
     else:
         html_content = httptools.downloadpage(item.url).data
 
+    if '/la7-cinema-tutti-i-film/rivedila7/' in item.url:
+        return [ item.clone(action='findvideos', url=item.url, video_url=item.url) ]
+
     itemlist = []
     matches = []
-    
+
     if 'la7teche' in item.url:
         patron = r'[^>]+>\s*<a href="(?P<url>[^"]+)">.*?image="(?P<thumb>[^"]+)(?:[^>]+>){4,5}\s*(?P<title>[\d\w][^<]+)(?:(?:[^>]+>){7}\s*(?P<title2>[\d\w][^<]+))?'
         html_content = html_content.split('id="block-system-main"')[1]
         match = support.match(html_content, patron=patron)
         matches.extend(match.matches)
+
     elif 'tgla7' in item.url:
         patron = r'<a href="(?P<url>[^"]+)"[^>]+data-bg="(?P<thumb>[^"]+)".*?</a>.*?<h4 class="news-title">\s*<a [^>]*>(?P<title>[^<]+)</a>.*?<div class="news-descrizione">\s*(?P<plot>[^<]+)\s*<'
         match = support.match(html_content, patron=patron)
         matches.extend(match.matches)
+
     else:
         if len(item.url.split('www.la7.it')[-1].strip('/').split("/")) == 1:
-            
             match = support.match(html_content, patron=r'page-taxonomy-term-(\d+)')
             tid = match.matches[0] if match.matches else ""
             if tid:
-                data = json.loads(httptools.downloadpage(f"https://www.la7.it/appla7/service_propertysmarttv?s=hbbtv&field_property_tid={tid}").data)
-                if data and isinstance(data, list):  # Ensure data is a non-empty list
-                    plot = html.unescape(data[0].get("testo", ""))
+                data = json.loads(httptools.downloadpage(
+                    f"https://www.la7.it/appla7/service_propertysmarttv?s=hbbtv&field_property_tid={tid}"
+                ).data)
+                plot = html.unescape(data[0].get("testo", "")) if data else ""
             else:
                 plot = ""
 
             match = support.match(html_content, patron=r'background-image:url\((\'|")([^\'"]+)(\'|")\);')
             fanart = match.matches[0][1] if match.matches else ""
 
-            match = support.match(html_content, patron=r'<li class="voce_menu">\s*<a href="([^"]+)"[^>]*>\s*([^<]+)\s*</a>\s*</li>')
+            match = support.match(html_content,
+                                  patron=r'<li class="voce_menu">\s*<a href="([^"]+)"[^>]*>\s*([^<]+)\s*</a>\s*</li>')
             result_dict = {text: href for href, text in match.matches}
-            for k,v in result_dict.items():
-                if(len(v.strip('/').split("/")) > 1):
+
+            for k, v in result_dict.items():
+                if len(v.strip('/').split("/")) > 1:
                     if not v.startswith('/') and not v.startswith('https://www.la7.it'):
                         continue
-                    else:
-                        v = f'{host}{v}'
-
+                    v = f'{host}{v}'
                     new_item = item.clone(
-                            title=support.typo(k, 'bold'),
-                            data='',
-                            fulltitle=k,
-                            show=k,
-                            url=v,
-                            plot=plot,
-                            fanart=fanart
-                        )
+                        title=support.typo(k, 'bold'),
+                        data='',
+                        fulltitle=k,
+                        show=k,
+                        url=v,
+                        plot=plot,
+                        fanart=fanart
+                    )
                     itemlist.append(new_item)
 
             patron = r'<div class="item.*?"> <a href="(?P<url>[^"]+)"><div class="holder-bg">.*?data-background-image="(?P<image>(?:https?:)?//[^"]+)".*?<div class="(?:title|occhiello)[^"]*">\s*(?P<title>[^<]+)\s*</div>'
             match = support.match(html_content.split('<div class="subcontent">')[-1], patron=patron)
             matches.extend(match.matches)
+
         else:
             html_content = html_content.split('<div class="main-content-node">')[-1].split('<div class="right">')[0]
-
-            # split the page here, above there is new videos, below archive
             html_content = html_content.split('<div class="view-content clearfix">')
             patron = r'<div class="[^"]*"[^>]*>.*?<a href="(?P<url>[^"]+)">.*?data-background-image="(?P<image>(?:https?:)?//[^"]+)"[^>]*>.*?<div class="title[^"]*">\s*(?P<title>[^<]+)\s*</div>'
-            
-            # if first page scrape ultima puntata
-            if '<li class="pager-previous">' not in html_content[0]: # if no previous page
+
+            if '<li class="pager-previous">' not in html_content[0]:
                 if len(html_content) > 1:
                     match = support.match(html_content[0], patron=patron)
                     matches.extend(match.matches)
 
-            # scrape archive
             html_content = html_content[-1]
             match = support.match(html_content, patron=patron)
             matches.extend(match.matches)
 
     visited = set()
+
     def itInfo(n, key, item):
         if 'la7teche' in item.url:
             programma_url, thumb, titolo, plot = key
@@ -307,47 +376,53 @@ def episodios(item):
             programma_url, thumb, titolo = key
             plot = ""
 
-        if programma_url in visited: return None
+        if programma_url in visited:
+            return None
 
         visited.add(programma_url)
         programma_url = f'{"https://tg.la7.it" if "tgla7" in item.url else host}{programma_url}'
-        thumb = 'https://'+thumb[2:] if thumb.startswith("//") else thumb
-
+        thumb = 'https://' + thumb[2:] if thumb.startswith("//") else thumb
         titolo = html.unescape(titolo)
-        it = item.clone(title=support.typo(titolo, 'bold'),
-                    data='',
-                    fulltitle=titolo,
-                    show=titolo,
-                    thumbnail= thumb,
-                    url=programma_url,
-                    video_url=programma_url,
-                    plot = plot if plot != "" else item.plot,
-                    order=n)
-        it.action = 'findvideos'
 
+        it = item.clone(
+            title=support.typo(titolo, 'bold'),
+            data='',
+            fulltitle=titolo,
+            show=titolo,
+            thumbnail=thumb,
+            url=programma_url,
+            video_url=programma_url,
+            plot=plot if plot else item.plot,
+            order=n
+        )
+        it.action = 'findvideos'
         return it
 
     original_length = len(itemlist)
+
     with futures.ThreadPoolExecutor() as executor:
         itlist = [executor.submit(itInfo, n, it, item) for n, it in enumerate(matches)]
         for res in futures.as_completed(itlist):
             if res.result():
                 itemlist.append(res.result())
+
     itemlist[original_length:] = sorted(itemlist[original_length:], key=lambda it: it.order)
 
     match = support.match(html_content, patron=r'<li class="pager-next"><a href="(.*?)">›</a></li>')
     if match.matches:
         next_page_link = match.matches[0]
         itemlist.append(
-            item.clone(title=support.typo(support.config.get_localized_string(30992), 'color std bold'),
-                        url= f'{host}{next_page_link}',
-                        order=len(itemlist),
-                        video_url='',
-                        thumbnail=''
-                )
+            item.clone(
+                title=support.typo(support.config.get_localized_string(30992), 'color std bold'),
+                url=f'{host}{next_page_link}',
+                order=len(itemlist),
+                video_url='',
+                thumbnail=''
             )
+        )
 
     return itemlist
+
 
 def findvideos(item):
     support.info()
