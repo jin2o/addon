@@ -189,33 +189,10 @@ def makeItem(n, it, item):
     itm = item.clone(title=support.typo(title,'bold') + support.typo(lang,'_ [] color std bold'))
     itm.contentType = it['type'].replace('tv', 'tvshow')
     itm.language = lang
-    itm.year = ''
-
-    air_date = it.get('release_date') or it.get('last_air_date')
-    if air_date:
-        itm.year = air_date.split('-')[0]
-
-    if getattr(item, 'fast_search', False) and not itm.year:
-        try:
-            url_to_fetch = host + '/it/watch/%s' % it['id'] if itm.contentType == 'movie' else host + '/it/titles/%s-%s' % (it['id'], it.get('slug', ''))
-            resp = httptools.downloadpage(url_to_fetch)
-            if resp.code == 200:
-                text = resp.data if isinstance(resp.data, str) else resp.data.decode('utf-8', 'ignore')
-                idx = text.find('data-page=')
-                if idx != -1:
-                    end_idx = text.find('>', idx)
-                    if end_idx != -1:
-                        data_str = text[idx+11:end_idx-1]
-                        import html as html_lib
-                        data_str = html_lib.unescape(data_str)
-                        data = jsontools.load(data_str)
-                        t = data.get('props', {}).get('title', {})
-                        real_air_date = t.get('release_date') or t.get('last_air_date')
-                        if real_air_date:
-                            itm.year = real_air_date.split('-')[0]
-        except Exception as e:
-            logger.error('Error fetching real year streamingcommunity: ' + str(e))
-
+    
+    # FIX ANNO - usa release_date invece di last_air_date
+    if it.get('release_date'):
+        itm.year = it['release_date'].split('-')[0]
 
     if itm.contentType == 'movie':
         # itm.contentType = 'movie'
@@ -279,4 +256,3 @@ def findvideos(item):
     itemlist = [item.clone(title=channeltools.get_channel_parameters(item.channel)['title'],
                            url=item.url.replace('/watch/', '/iframe/'), server='streamingcommunityws')]
     return support.server(item, itemlist=itemlist, referer=False)
-
