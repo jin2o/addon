@@ -284,12 +284,27 @@ def updateFromZip(message=config.get_localized_string(80050)):
 
     # puliamo tutto
     global addonDir
+    import shutil
     if extractedDir != addonDir:
-        removeTree(addonDir)
+        try:
+            for root, dirs, files in os.walk(extractedDir):
+                for name in files:
+                    src_file = os.path.join(root, name)
+                    rel_path = os.path.relpath(root, extractedDir)
+                    dst_folder = os.path.join(addonDir, rel_path)
+                    
+                    if not os.path.exists(dst_folder):
+                        os.makedirs(dst_folder)
+                    
+                    dst_file = os.path.join(dst_folder, name)
+                    shutil.copy2(src_file, dst_file)
+            logger.info("File sovrascritti con successo!")
+        except Exception as e:
+            logger.error("Errore durante la sovrascrittura manuale (Windows workaround): %s" % str(e))
+        finally:
+            removeTree(extractedDir)
+            
     xbmc.sleep(1000)
-
-    rename(extractedDir, 'plugin.video.s4me')
-    addonDir = filetools.join(destpathname, 'plugin.video.s4me')
 
     logger.info("Cancellando il file zip...")
     remove(localfilename)
