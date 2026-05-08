@@ -189,11 +189,15 @@ def makeItem(n, it, item):
     itm = item.clone(title=support.typo(title,'bold') + support.typo(lang,'_ [] color std bold'))
     itm.contentType = it['type'].replace('tv', 'tvshow')
     itm.language = lang
-    itm.year = ''
 
-    air_date = it.get('release_date') or it.get('last_air_date')
-    if air_date:
-        itm.year = air_date.split('-')[0]
+    year_str = (it.get('release_date') or it.get('last_air_date') or
+                next((tr['value'] for tr in it.get('translations', [])
+                      if tr.get('key') in ('release_date', 'last_air_date') and tr.get('value')), None))
+    if year_str:
+        try:
+            itm.year = int(str(year_str)[:4])
+        except:
+            pass
 
     if getattr(item, 'fast_search', False) and not itm.year:
         try:
@@ -212,7 +216,7 @@ def makeItem(n, it, item):
                         t = data.get('props', {}).get('title', {})
                         real_air_date = t.get('release_date') or t.get('last_air_date')
                         if real_air_date:
-                            itm.year = real_air_date.split('-')[0]
+                            itm.year = int(str(real_air_date)[:4])
         except Exception as e:
             logger.error('Error fetching real year streamingcommunity: ' + str(e))
 
