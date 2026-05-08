@@ -287,8 +287,18 @@ def try_channel_movie(channel_id, title, year, metadata=None):
             logger.info(f'No videos found on {channel_id}')
             return False
         
-        # Filtra solo gli item con server definito
-        video_items = [v for v in video_items if hasattr(v, 'server') and v.server]
+        # Filtra solo gli item riproducibili (action=play) con server valido
+        # Questo esclude gli item "Videoteca", "Download", "Info qualità" etc.
+        # aggiunti da support.server()
+        video_items = [
+            v for v in video_items
+            if getattr(v, 'action', '') == 'play'
+            and getattr(v, 'server', '')
+            and getattr(v, 'url', '')
+        ]
+        # Normalizza server ID a lowercase (CB01 usa nomi come "Streamtape")
+        for v in video_items:
+            v.server = v.server.lower()
         
         if not video_items:
             logger.info(f'No valid video items on {channel_id}')
@@ -411,8 +421,17 @@ def try_channel_episode(channel_id, title, season, episode, year, metadata=None)
             logger.info(f'No videos found for episode on {channel_id}')
             return False
         
-        # Filtra solo gli item con server definito
-        video_items = [v for v in video_items if hasattr(v, 'server') and v.server]
+        # Filtra solo gli item riproducibili (action=play) con server valido
+        # Questo esclude gli item "Videoteca", "Download", "Info qualità" etc.
+        video_items = [
+            v for v in video_items
+            if getattr(v, 'action', '') == 'play'
+            and getattr(v, 'server', '')
+            and getattr(v, 'url', '')
+        ]
+        # Normalizza server ID a lowercase
+        for v in video_items:
+            v.server = v.server.lower()
         
         if not video_items:
             logger.info(f'No valid video items for episode on {channel_id}')

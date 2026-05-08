@@ -82,22 +82,21 @@ def run(item=None):
         # Special action for direct episode playback from TMDb Helper
         elif item.action == 'play_episode_direct': play_episode_direct(item)
 
-        # Special action for movie playback with fallback across channels
+        # Special action for multi-channel fallback movie playback
         elif item.action == 'play_movie_fallback':
-            from platformcode.fallback_player import play_movie_fallback
-            play_movie_fallback(item)
+            from platformcode import fallback_player
+            fallback_player.play_movie_fallback(item)
 
-        # Special action for episode playback with fallback across channels
+        # Special action for multi-channel fallback episode playback
         elif item.action == 'play_episode_fallback':
-            from platformcode.fallback_player import play_episode_fallback
-            play_episode_fallback(item)
+            from platformcode import fallback_player
+            fallback_player.play_episode_fallback(item)
 
         ######## Following shares must be improved ########
 
         # Special itemInfo Action
         elif item.action == "itemInfo":
             platformtools.dialog_textviewer('Item info', item.parent)
-
 
         # Special action for open item.url in browser
         elif item.action == "open_browser":
@@ -289,41 +288,15 @@ def limitItemlist(itemlist):
 def makeItem():
     logger.debug()
     if sys.argv[2]:
-        # Use proper URL parsing for parameters
-        full_url = sys.argv[2]
-        
-        # Try to extract the base item from the first part (before any standalone params)
-        # The plugin URLs can have format: ?base64_item&key=value or ?key=value
-        if '?' in full_url:
-            full_url = full_url.split('?', 1)[1]
-        
-        # Use urllib.parse to properly parse query parameters
-        from six.moves.urllib.parse import parse_qs, unquote
-        
-        # First, try to identify if there's a base64 item at the start
-        parts = full_url.split('&', 1)
-        first_part = parts[0]
-        
-        # Check if first part is the base64-encoded item (doesn't contain '=')
-        if '=' not in first_part:
-            item = Item().fromurl(first_part)
-            remaining_query = parts[1] if len(parts) > 1 else ''
-        else:
-            item = Item()
-            remaining_query = full_url
-        
-        # Parse remaining query parameters properly
-        if remaining_query:
-            # parse_qs handles URL encoding properly
-            params = parse_qs(remaining_query, keep_blank_values=True)
-            
-            for key, values in params.items():
-                val = values[0] if values else ''
-                # Handle boolean conversions
+        sp = sys.argv[2].split('&')
+        url = sp[0]
+        item = Item().fromurl(url)
+        if len(sp) > 1:
+            for e in sp[1:]:
+                key, val = e.split('=')
                 if val.lower() == 'false': val = False
                 elif val.lower() == 'true': val = True
-                else: val = unquote(val) if isinstance(val, str) else val
-                item.__setattr__(key, val)
+                item.__setattr__(key, urllib.parse.unquote(val) if isinstance(val,str) else val)
     # If no item, this is mainlist
     else:
         item = Item(channel='channelselector', action='getmainlist', viewmode='movie')
@@ -528,15 +501,36 @@ def play_movie_direct(item):
         
         if not results:
             platformtools.dialog_notification(config.get_localized_string(20000), 'No results found')
-            try: import sys, xbmcplugin, xbmcgui; xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-            except: pass
             return
         
-        
         # Filter results - look for best match
-        from platformcode.fallback_player import find_best_movie_match
-        best_match = find_best_movie_match(results, search_text, year)
-
+        best_match = None
+        search_text_lower = search_text.lower()
+        
+        for result in results:
+            if result.contentType != 'movie':
+                continue
+            
+            title = (result.contentTitle or result.title or '').lower()
+            result_year = str(result.year or result.infoLabels.get('year', ''))
+            
+            # Exact title match with year
+            if search_text_lower == title and year and result_year == year:
+                best_match = result
+                break
+            # Exact title match without year check
+            elif search_text_lower == title and not best_match:
+                best_match = result
+            # Partial match
+            elif search_text_lower in title and not best_match:
+                best_match = result
+        
+        if not best_match and results:
+            # Fallback to first movie result
+            for result in results:
+                if result.contentType == 'movie':
+                    best_match = result
+                    break
         
         if best_match:
             logger.debug('Found match:', best_match.contentTitle or best_match.title)
@@ -545,8 +539,6 @@ def play_movie_direct(item):
             findvideos(best_match)
         else:
             platformtools.dialog_notification(config.get_localized_string(20000), 'No matching movie found')
-            try: import sys, xbmcplugin, xbmcgui; xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-            except: pass
             
     except Exception as e:
         import traceback
@@ -591,15 +583,36 @@ def play_episode_direct(item):
         
         if not results:
             platformtools.dialog_notification(config.get_localized_string(20000), 'No results found')
-            try: import sys, xbmcplugin, xbmcgui; xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-            except: pass
             return
         
-        
         # Filter results - look for best match
-        from platformcode.fallback_player import find_best_tvshow_match
-        best_match = find_best_tvshow_match(results, search_text, year)
-
+        best_match = None
+        search_text_lower = search_text.lower()
+        
+        for result in results:
+            if result.contentType != 'tvshow':
+                continue
+            
+            title = (result.contentSerieName or result.contentTitle or result.title or '').lower()
+            result_year = str(result.year or result.infoLabels.get('year', ''))
+            
+            # Exact title match with year
+            if search_text_lower == title and year and result_year == year:
+                best_match = result
+                break
+            # Exact title match without year check
+            elif search_text_lower == title and not best_match:
+                best_match = result
+            # Partial match
+            elif search_text_lower in title and not best_match:
+                best_match = result
+        
+        if not best_match and results:
+            # Fallback to first tvshow result
+            for result in results:
+                if result.contentType == 'tvshow':
+                    best_match = result
+                    break
         
         if best_match:
             logger.debug('Found show match:', best_match.contentSerieName or best_match.title)
@@ -638,12 +651,8 @@ def play_episode_direct(item):
                 findvideos(target_episode)
             else:
                 platformtools.dialog_notification(config.get_localized_string(20000), f'Episode S{season}E{episode} not found')
-                try: import sys, xbmcplugin, xbmcgui; xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-                except: pass
         else:
             platformtools.dialog_notification(config.get_localized_string(20000), 'No matching show found')
-            try: import sys, xbmcplugin, xbmcgui; xbmcplugin.setResolvedUrl(int(sys.argv[1]), False, xbmcgui.ListItem())
-            except: pass
             
     except Exception as e:
         import traceback
