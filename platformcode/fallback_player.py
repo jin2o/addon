@@ -307,32 +307,48 @@ def try_channel_movie(channel_id, title, year, metadata=None):
         # Prova ogni video item fino a trovarne uno funzionante
         for video_item in video_items:
             try:
-                # Verifica se il video esiste (risolve anche gli shortener)
-                video_urls, exists, error_msg = servertools.resolve_video_urls_for_playing(
-                    video_item.server, 
-                    video_item.url, 
-                    video_item.password if hasattr(video_item, 'password') else '',
-                    muestra_dialogo=False
-                )
+                # Se il canale ha un metodo play (es. cineblog01), dobbiamo chiamarlo
+                # per ottenere i link reali (risolve shortener e iframe intermedi)
+                playable_items = [video_item]
+                if hasattr(channel, 'play'):
+                    result = channel.play(video_item)
+                    if result and isinstance(result, list):
+                        if len(result) > 0 and type(result[0]).__name__ == 'Item':
+                            playable_items = result
+                        elif len(result) > 0 and isinstance(result[0], list):
+                            video_item.video_urls = result
+                            playable_items = [video_item]
                 
-                if exists and video_urls:
-                    # Video funzionante trovato! Riproducilo
-                    logger.info(f'Working link found on {channel_id}: {video_item.server}')
+                for playable in playable_items:
+                    if not getattr(playable, 'server', '') or not getattr(playable, 'url', ''):
+                        continue
+                        
+                    playable.server = playable.server.lower()
+                    # Verifica se il video esiste
+                    video_urls, exists, error_msg = servertools.resolve_video_urls_for_playing(
+                        playable.server, 
+                        playable.url, 
+                        playable.password if hasattr(playable, 'password') else '',
+                        muestra_dialogo=False
+                    )
                     
-                    # Passa gli URL pre-risolti per evitare doppia risoluzione
-                    video_item.video_urls = video_urls
-                    
-                    # Applica metadati
-                    if metadata:
-                        video_item.infoLabels.update(metadata)
-                    
-                    # Riproduci
-                    platformtools.play_video(video_item)
-                    return True
-                else:
-                    logger.info(f'Dead link on {channel_id}: {video_item.server} - {error_msg}')
-                    # Prova il prossimo video item
-                    
+                    if exists and video_urls:
+                        # Video funzionante trovato! Riproducilo
+                        logger.info(f'Working link found on {channel_id}: {playable.server}')
+                        
+                        # Passa gli URL pre-risolti
+                        playable.video_urls = video_urls
+                        
+                        # Applica metadati
+                        if metadata:
+                            playable.infoLabels.update(metadata)
+                        
+                        # Riproduci
+                        platformtools.play_video(playable)
+                        return True
+                    else:
+                        logger.info(f'Dead link on {channel_id}: {playable.server} - {error_msg}')
+                        
             except Exception as e:
                 logger.info(f'Error checking link on {channel_id}: {e}')
                 continue
@@ -440,150 +456,166 @@ def try_channel_episode(channel_id, title, season, episode, year, metadata=None)
         # Prova ogni video item fino a trovarne uno funzionante
         for video_item in video_items:
             try:
-                # Verifica se il video esiste (risolve anche gli shortener)
-                video_urls, exists, error_msg = servertools.resolve_video_urls_for_playing(
-                    video_item.server, 
-                    video_item.url, 
-                    video_item.password if hasattr(video_item, 'password') else '',
-                    muestra_dialogo=False
-                )
+                # Se il canale ha un metodo play (es. cineblog01), chiamiamolo
+                playable_items = [video_item]
+                if hasattr(channel, 'play'):
+                    result = channel.play(video_item)
+                    if result and isinstance(result, list):
+                        if len(result) > 0 and type(result[0]).__name__ == 'Item':
+                            playable_items = result
+                        elif len(result) > 0 and isinstance(result[0], list):
+                            video_item.video_urls = result
+                            playable_items = [video_item]
                 
-                if exists and video_urls:
-                    # Video funzionante trovato!
-                    logger.info(f'Working episode link found on {channel_id}: {video_item.server}')
+                for playable in playable_items:
+                    if not getattr(playable, 'server', '') or not getattr(playable, 'url', ''):
+                        continue
+                        
+                    playable.server = playable.server.lower()
+                    # Verifica se il video esiste
+                    video_urls, exists, error_msg = servertools.resolve_video_urls_for_playing(
+                        playable.server, 
+                        playable.url, 
+                        playable.password if hasattr(playable, 'password') else '',
+                        muestra_dialogo=False
+                    )
                     
-                    # Passa gli URL pre-risolti
-                    video_item.video_urls = video_urls
-                    
-                    # Applica metadata
-                    if metadata:
-                        if 'duration' in metadata:
-                           try:
-                               metadata['duration'] = int(metadata['duration'])
-                           except:
-                               del metadata['duration']
-                        video_item.infoLabels.update(metadata)
-                    
-                    # Assicurati che i label base ci siano
-                    if not video_item.infoLabels.get('mediatype'):
-                        video_item.infoLabels['mediatype'] = 'episode'
-                    if not video_item.infoLabels.get('season'):
-                        video_item.infoLabels['season'] = season
-                    if not video_item.infoLabels.get('episode'):
-                        video_item.infoLabels['episode'] = episode
-                    
-                    # UpNext Integration
-                    try:
-                        import xbmc
-                        import json
+                    if exists and video_urls:
+                        # Video funzionante trovato!
+                        logger.info(f'Working episode link found on {channel_id}: {playable.server}')
                         
-                        if PY3:
-                            from urllib.parse import urlencode
-                        else:
-                            from urllib import urlencode
+                        # Passa gli URL pre-risolti
+                        playable.video_urls = video_urls
                         
-                        current_season = int(video_item.infoLabels.get('season', season))
-                        current_episode = int(video_item.infoLabels.get('episode', episode))
-                        
-                        next_season = current_season
-                        next_episode = current_episode + 1
-                        
-                        url_params = {
-                            'action': 'play_episode_fallback',
-                            'text': title,
-                            'season': next_season,
-                            'episode': next_episode,
-                            'year': year
-                        }
-                        
+                        # Applica metadata
                         if metadata:
-                            for key, value in metadata.items():
-                                if key not in ['title', 'plot', 'duration', 'premiered', 'date', 'votes', 'rating', 'playcount']:
-                                    if value:
-                                        url_params[key] = value
-                        
-                        query = urlencode(url_params)
-                        next_url = f"plugin://plugin.video.s4me/?{query}"
-                        
-                        pseudo_show_id = metadata.get('tmdb_id') or metadata.get('imdb_id') or str(abs(hash(title))) if metadata else str(abs(hash(title)))
-                        
-                        upnext_info = {
-                            "current_episode": {
-                                "episode": str(current_episode),
-                                "season": str(current_season),
-                                "title": title,
-                                "showtitle": metadata.get('tvshowtitle', title) if metadata else title,
-                                "tvshowid": pseudo_show_id,
-                                "mediatype": "episode",
-                                "art": {
-                                    "tvshow.poster": video_item.infoLabels.get('poster') or video_item.thumbnail,
-                                    "thumb": video_item.thumbnail,
-                                    "fanart": video_item.fanart
-                                }
-                            },
-                            "next_episode": {
-                                "episode": str(next_episode),
-                                "season": str(next_season),
-                                "title": "Episode {}".format(next_episode),
-                                "showtitle": metadata.get('tvshowtitle', title) if metadata else title,
-                                "tvshowid": pseudo_show_id,
-                                "mediatype": "episode",
-                                "art": {
-                                    "tvshow.poster": video_item.infoLabels.get('poster') or video_item.thumbnail,
-                                    "thumb": video_item.thumbnail,
-                                    "fanart": video_item.fanart
-                                }
-                            },
-                            "play_url": next_url,
-                        }
-                        
-                        def send_upnext_signal(data):
-                            import time
-                            import base64
-                            
-                            idx = 0
-                            while idx < 20:
-                                if xbmc.Player().isPlaying():
-                                    break
-                                time.sleep(1)
-                                idx += 1
-                            
-                            time.sleep(5)
-                            
-                            if xbmc.Player().isPlaying():
+                            if 'duration' in metadata:
                                 try:
-                                    json_data = json.dumps(data)
-                                    encoded_data = base64.b64encode(json_data.encode('utf-8')).decode('utf-8')
-                                    
-                                    params = {
-                                        "sender": "plugin.video.s4me.SIGNAL",
-                                        "message": "upnext_data",
-                                        "data": [encoded_data]
+                                    metadata['duration'] = int(metadata['duration'])
+                                except:
+                                    del metadata['duration']
+                            playable.infoLabels.update(metadata)
+                        
+                        # Assicurati che i label base ci siano
+                        if not playable.infoLabels.get('mediatype'):
+                            playable.infoLabels['mediatype'] = 'episode'
+                        if not playable.infoLabels.get('season'):
+                            playable.infoLabels['season'] = season
+                        if not playable.infoLabels.get('episode'):
+                            playable.infoLabels['episode'] = episode
+                        
+                        # UpNext Integration
+                        try:
+                            import xbmc
+                            import json
+                            
+                            if PY3:
+                                from urllib.parse import urlencode
+                            else:
+                                from urllib import urlencode
+                            
+                            current_season = int(playable.infoLabels.get('season', season))
+                            current_episode = int(playable.infoLabels.get('episode', episode))
+                            
+                            next_season = current_season
+                            next_episode = current_episode + 1
+                            
+                            url_params = {
+                                'action': 'play_episode_fallback',
+                                'text': title,
+                                'season': next_season,
+                                'episode': next_episode,
+                                'year': year
+                            }
+                            
+                            if metadata:
+                                for key, value in metadata.items():
+                                    if key not in ['title', 'plot', 'duration', 'premiered', 'date', 'votes', 'rating', 'playcount']:
+                                        if value:
+                                            url_params[key] = value
+                            
+                            query = urlencode(url_params)
+                            next_url = f"plugin://plugin.video.s4me/?{query}"
+                            
+                            pseudo_show_id = metadata.get('tmdb_id') or metadata.get('imdb_id') or str(abs(hash(title))) if metadata else str(abs(hash(title)))
+                            
+                            upnext_info = {
+                                "current_episode": {
+                                    "episode": str(current_episode),
+                                    "season": str(current_season),
+                                    "title": title,
+                                    "showtitle": metadata.get('tvshowtitle', title) if metadata else title,
+                                    "tvshowid": pseudo_show_id,
+                                    "mediatype": "episode",
+                                    "art": {
+                                        "tvshow.poster": playable.infoLabels.get('poster') or playable.thumbnail,
+                                        "thumb": playable.thumbnail,
+                                        "fanart": playable.fanart
                                     }
-                                    
-                                    xbmc.executeJSONRPC(json.dumps({
-                                        "jsonrpc": "2.0", 
-                                        "method": "JSONRPC.NotifyAll", 
-                                        "params": params, 
-                                        "id": 1
-                                    }))
-                                except Exception as e:
-                                    logger.error(f"[S4ME] UpNext thread error: {e}")
+                                },
+                                "next_episode": {
+                                    "episode": str(next_episode),
+                                    "season": str(next_season),
+                                    "title": "Episode {}".format(next_episode),
+                                    "showtitle": metadata.get('tvshowtitle', title) if metadata else title,
+                                    "tvshowid": pseudo_show_id,
+                                    "mediatype": "episode",
+                                    "art": {
+                                        "tvshow.poster": playable.infoLabels.get('poster') or playable.thumbnail,
+                                        "thumb": playable.thumbnail,
+                                        "fanart": playable.fanart
+                                    }
+                                },
+                                "play_url": next_url,
+                            }
+                            
+                            def send_upnext_signal(data):
+                                import time
+                                import base64
+                                
+                                idx = 0
+                                while idx < 20:
+                                    if xbmc.Player().isPlaying():
+                                        break
+                                    time.sleep(1)
+                                    idx += 1
+                                
+                                time.sleep(5)
+                                
+                                if xbmc.Player().isPlaying():
+                                    try:
+                                        json_data = json.dumps(data)
+                                        encoded_data = base64.b64encode(json_data.encode('utf-8')).decode('utf-8')
+                                        
+                                        params = {
+                                            "sender": "plugin.video.s4me.SIGNAL",
+                                            "message": "upnext_data",
+                                            "data": [encoded_data]
+                                        }
+                                        
+                                        xbmc.executeJSONRPC(json.dumps({
+                                            "jsonrpc": "2.0", 
+                                            "method": "JSONRPC.NotifyAll", 
+                                            "params": params, 
+                                            "id": 1
+                                        }))
+                                    except Exception as e:
+                                        logger.error(f"[S4ME] UpNext thread error: {e}")
+                            
+                            import threading
+                            t = threading.Thread(target=send_upnext_signal, args=(upnext_info,))
+                            t.daemon = True
+                            t.start()
+                            
+                        except Exception as e:
+                            logger.error(f"[S4ME] UpNext integration failed: {e}")
                         
-                        import threading
-                        t = threading.Thread(target=send_upnext_signal, args=(upnext_info,))
-                        t.daemon = True
-                        t.start()
+                        # Riproduci
+                        platformtools.play_video(playable)
+                        return True
+                    else:
+                        logger.info(f'Dead episode link on {channel_id}: {playable.server} - {error_msg}')
                         
-                    except Exception as e:
-                        logger.error(f"[S4ME] UpNext integration failed: {e}")
-                    
-                    # Riproduci
-                    platformtools.play_video(video_item)
-                    return True
-                else:
-                    logger.info(f'Dead episode link on {channel_id}: {video_item.server} - {error_msg}')
-                    
             except Exception as e:
                 logger.info(f'Error checking episode link on {channel_id}: {e}')
                 continue
