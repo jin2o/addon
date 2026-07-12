@@ -1,0 +1,130 @@
+name: Build and Release Kodi Addon
+
+on:
+  # Runs after sync-upstream completes
+  workflow_run:
+    workflows: ["Sync Upstream and Apply Optimizations"]
+    types: [completed]
+  # Runs on any push to master (manual commits too)
+  push:
+    branches: [master]
+  # Manual trigger
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Only run if triggered manually, by push, or if the upstream sync succeeded
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Extract Version from addon.xml
+        id: version
+        run: |
+          VERSION=$(grep -oP 'version="\K[^"]+' addon.xml | head -1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected addon version: $VERSION"
+
+      - name: Get Short Commit Hash
+        id: commit
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "Short SHA: $SHORT_SHA"
+
+      - name: Build Kodi Addon Zip
+        run: |
+          ADDON_ID="plugin.video.s4me"
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP_NAME="${ADDON_ID}-${VERSION}.zip"
+          
+          # Create a clean staging directory with the correct addon folder name
+          mkdir -p /tmp/build/${ADDON_ID}
+          
+          # Copy all addon files, excluding non-addon items
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.gitignore' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='.DS_Store' \
+            --exclude='.idea' \
+            --exclude='.vscode' \
+            --exclude='tests' \
+            --exclude='reports' \
+            --exclude='bin' \
+            --exclude='.directory' \
+            --exclude='CONTRIBUTING.md' \
+            --exclude='LICENSE' \
+            --exclude='README.md' \
+            ./ /tmp/build/${ADDON_ID}/
+          
+          # Create the zip from the staging directory
+          cd /tmp/build
+          zip -r /tmp/${ZIP_NAME} ${ADDON_ID}/
+          
+          echo "Built: ${ZIP_NAME}"
+          echo "zip_path=/tmp/${ZIP_NAME}" >> $GITHUB_ENV
+          echo "zip_name=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          # Get last 10 commit messages for the changelog
+          CHANGELOG=$(git log -10 --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- Latest build")
+          # Escape for GitHub Actions
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "changelog<<$EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "$EOF" >> $GITHUB_OUTPUT
+
+      - name: Delete Existing Release (if same version)
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v${VERSION}"
+          
+          # Delete the release if it exists
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          # Delete the tag if it exists
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHORT_SHA="${{ steps.commit.outputs.short_sha }}"
+          TAG="v${VERSION}"
+          
+          gh release create "$TAG" \
+            "${{ env.zip_path }}#plugin.video.s4me-${VERSION}.zip" \
+            --title "Stream4Me v${VERSION}" \
+            --notes "## Stream4Me v${VERSION}
+
+          ### 📦 Installazione
+          1. Scarica il file \`plugin.video.s4me-${VERSION}.zip\`
+          2. Apri Kodi → Impostazioni → Addon → Installa da file zip
+          3. Seleziona il file zip scaricato
+          4. L'addon verrà installato automaticamente
+
+          ### 📋 Ultime modifiche
+          ${{ steps.changelog.outputs.changelog }}
+
+          ---
+          🔄 Build: \`${SHORT_SHA}\` | 📅 $(date -u '+%Y-%m-%d %H:%M UTC')" \
+            --latest

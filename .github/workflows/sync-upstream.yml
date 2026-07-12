@@ -35,6 +35,8 @@ jobs:
           cp channels/streamingcommunity.py /tmp/custom_backup/channels/ 2>/dev/null || true
           cp resources/settings.xml /tmp/custom_backup/ 2>/dev/null || true
           cp -r .github/workflows /tmp/custom_backup/ 2>/dev/null || true
+          # Ensure addon.xml is preserved (keeps our version bump)
+          cp addon.xml /tmp/custom_backup/ 2>/dev/null || true
 
       - name: Merge Upstream Changes
         run: |
@@ -52,6 +54,7 @@ jobs:
           cp /tmp/custom_backup/settings.xml resources/ 2>/dev/null || true
           mkdir -p .github/workflows
           cp -r /tmp/custom_backup/workflows/. .github/workflows/ 2>/dev/null || true
+          cp /tmp/custom_backup/addon.xml . 2>/dev/null || true
 
       - name: Commit and Push
         run: |
