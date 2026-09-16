@@ -1,19 +1,5 @@
 # -*- coding: utf-8 -*-
 # Server vidxgo per S4me
-# ------------------------------------------------------------
-# [PORT-RANDOM]  porta effimera ad ogni play: ogni istanza del proxy ascolta
-#                su una porta diversa, nessuna probabilita' di collisione con
-#                processi/zombie. TRADEOFF NOTO: l'URL di playback cambia a
-#                ogni play -> il resume point di Kodi NON viene ritrovato.
-# [RATE-FIX]     rate-limit CDN solo sulle playlist: i segmenti non throttlati
-#                (era la causa degli "stream stalled" periodici).
-# [BG-MAINT]     heartbeat e refresh token in background, fuori dal thread
-#                richiesta (latenza fuori dalla risposta a Kodi).
-# [NET-FIX]      blackout DNS/rete: lock reale sul refresh (niente storm di
-#                thread concorrenti), cooldown 10s sui fallimenti di rete
-#                (niente martellamento del resolver malato), log compatti
-#                (1 riga invece di 50) per heartbeat e refresh.
-# ------------------------------------------------------------
 
 import base64, json, os, re, ssl, tempfile, threading, time, traceback, uuid
 import urllib.parse
@@ -43,8 +29,10 @@ WD_IDLE_NEVER = 30
 
 REFRESH_GRACE = 60
 
-# [RATE-FIX] intervallo minimo tra richieste "di controllo" (playlist/rotazioni)
 CDN_MIN_INTERVAL = 1.0
+
+RELAY_CONNECT_TIMEOUT = 10
+RELAY_READ_TIMEOUT = 30
 
 _PROXY = {'server': None, 'port': 0, 'base': '',
           't_url': '', 'imdb': '', 'fresh_query': '', 'dur': 0,
@@ -60,31 +48,48 @@ _RELAY_SESSIONS = {}
 _RELAY_CAND = {}
 _RELAY_DIRECT = set()
 _LAST_REFRESH = [0.0]
-_BG_MAINT = [0.0]     # [BG-MAINT] un solo worker di manutenzione per volta
+_BG_MAINT = [0.0]
 _PLCACHE = {}
 _PLCACHE_TTL = 120
 
-# [NET-FIX] stato blackout rete
-_NET_FAIL = [0.0]                       # ultimo fallimento di rete (DNS/conn.)
-_REFRESH_LOCK = threading.Lock()        # un solo refresh per volta, davvero
+_NET_FAIL = [0.0, 0]
+_REFRESH_LOCK = threading.Lock()
+
+_HEAL = {'t': 0.0, 'busy': False}
+_PATH_MAP = ['', '']
 
 
 _RATELIMIT_FILE = os.path.join(tempfile.gettempdir(), 'alfa_vidxgo_ratelimit.json')
 
 
 def _net_down():
-    """[NET-FIX] True per 10s dopo un fallimento di rete (DNS/connessione):
-    evita storm di retry e log-spam durante un blackout transitorio."""
-    return time.time() - _NET_FAIL[0] < 10.0
+    if _NET_FAIL[1] == 0:
+        return False
+    backoff = min(10 * (2 ** min(_NET_FAIL[1] - 1, 4)), 160)
+    return time.time() - _NET_FAIL[0] < backoff
 
 
 def _is_net_error(e):
-    """[NET-FIX] riconosce i fallimenti di rete transitori (DNS giu', conn.
-    rifiutata): log compatti + cooldown invece di traceback completi."""
     s = str(e)
-    if 'Name or service not known' in s or 'Temporary failure in name resolution' in s:
+    tn = type(e).__name__
+    if 'Name or service not known' in s or 'Temporary failure' in s:
         return True
-    return 'ConnectionError' in type(e).__name__ or 'gaierror' in type(e).__name__
+    if 'Timeout' in tn:
+        return True
+    if 'timed out' in s.lower():
+        return True
+    if 'ConnectionError' in tn or 'gaierror' in tn:
+        return True
+    return False
+
+
+def _net_fail():
+    _NET_FAIL[0] = time.time()
+    _NET_FAIL[1] += 1
+
+
+def _net_ok():
+    _NET_FAIL[1] = 0
 
 
 def _ratelimit_load():
@@ -289,7 +294,7 @@ def _prefetch_playlists():
         def fetch(path):
             url = base + path + (('?' + q) if q else '')
             try:
-                r = sess.get(url, timeout=(10, 30))
+                r = sess.get(url, timeout=(RELAY_CONNECT_TIMEOUT, 30))
             except Exception:
                 return None
             if r.status_code == 200:
@@ -318,21 +323,19 @@ def _prefetch_playlists():
 
 
 def _refresh_token():
-    # [NET-FIX] gate velocissimo (throttle successo), blackout check,
-    # poi lock NON-bloccante: un solo refresh alla volta, gli altri escono
     if time.time() - _LAST_REFRESH[0] < 1.5:
         return True
     if _net_down():
-        return False                       # blackout in corso: riprova piu' tardi
+        return False
     if not _REFRESH_LOCK.acquire(blocking=False):
-        return True                        # un altro thread sta gia' refreshando
+        return True
     try:
         try:
             s = _vidxgo_session()
             r = s.get(_PROXY['t_url'],
                       headers={'User-Agent': UA_FF, 'Referer': HOST + '/',
                                'Accept': 'application/json, text/plain, */*'},
-                      timeout=10)
+                      timeout=RELAY_CONNECT_TIMEOUT + 1)
             if r.status_code == 200:
                 data = r.json()
                 new_url = data.get('url') or ''
@@ -347,15 +350,15 @@ def _refresh_token():
                         except Exception:
                             pass
                     _LAST_REFRESH[0] = time.time()
+                    _net_ok()
                     logger.info('vidxgo token refreshed')
                     return True
             logger.error('vidxgo token refresh failed: HTTP ' + str(r.status_code))
         except Exception as e:
-            # [NET-FIX] 1 riga compatta per blackout DNS, non 50 di traceback
             if _is_net_error(e):
-                _NET_FAIL[0] = time.time()
-                logger.error('vidxgo token refresh: rete irraggiungibile, '
-                             'backoff 10s (%s)' % str(e)[:80])
+                _net_fail()
+                logger.error('vidxgo token refresh: rete irraggiungibile '
+                             '(backoff #%d, %s)' % (_NET_FAIL[1], str(e)[:80]))
             else:
                 logger.error('vidxgo token refresh crashed: ' + traceback.format_exc())
         return False
@@ -374,7 +377,56 @@ def _maybe_refresh_by_expire():
         _refresh_token()
 
 
-# [BG-MAINT] manutenzione FUORI dal percorso di streaming -------------------
+def _hot_heal(old_host):
+    try:
+        if not _PROXY.get('t_url'):
+            return False
+        if _net_down():
+            return False
+        if time.time() - _HEAL['t'] < 30.0:
+            return False
+        _HEAL['t'] = time.time()
+
+        hdrs = {'User-Agent': UA_FF, 'Referer': HOST + '/',
+                'Accept': 'application/json, text/plain, */*'}
+        r, t_url, _s = _vidxgo_resolve([_PROXY['t_url']], hdrs)
+        if r is None:
+            return False
+        data = r.json()
+        new_url = data.get('url') or ''
+        if not new_url:
+            return False
+        exp = data.get('expire')
+        if exp:
+            try:
+                _PROXY['expire_ms'] = int(exp)
+            except Exception:
+                pass
+        _PROXY['t_url'] = t_url
+        _PROXY['fresh_query'] = urllib.parse.urlparse(new_url).query
+
+        u = urllib.parse.urlparse(new_url)
+        new_base = u.scheme + '://' + u.netloc
+        if new_base != _PROXY['base']:
+            old_dir = _PROXY.get('master_path', '').rsplit('/', 1)[0]
+            new_dir = u.path.rsplit('/', 1)[0]
+            if old_dir != new_dir:
+                _PATH_MAP[0], _PATH_MAP[1] = old_dir, new_dir
+            else:
+                _PATH_MAP[0] = _PATH_MAP[1] = ''
+            logger.info('vidxgo hot-heal: CDN %s -> %s' % (_PROXY['base'], new_base))
+            _PROXY['base'] = new_base
+            _PROXY['master_path'] = u.path
+            _PROXY['host'] = u.netloc
+            _PLCACHE.clear()
+        else:
+            logger.info('vidxgo hot-heal: stesso CDN %s, token rinfrescato' % new_base)
+        return True
+    except Exception:
+        logger.error('vidxgo hot-heal: ' + traceback.format_exc())
+        return False
+
+
 def _maintenance_due():
     exp = _PROXY.get('expire_ms') or 0
     if not exp or not _PROXY.get('t_url'):
@@ -382,12 +434,10 @@ def _maintenance_due():
     if time.time() - _PROXY.get('t0', time.time()) < REFRESH_GRACE:
         return False
     remaining = (exp / 1000.0) - time.time() if exp > 10**12 else (exp - time.time())
-    return remaining <= 45        # margine ampio: il refresh gira in background
+    return remaining <= 45
 
 
 def _maintenance_do(pos, need_hb):
-    """Heartbeat + refresh token in background: la loro latenza di rete non
-    deve mai finire dentro la risposta a Kodi."""
     try:
         if need_hb:
             _send_heartbeat(pos)
@@ -396,12 +446,11 @@ def _maintenance_do(pos, need_hb):
             _refresh_token()
     except Exception:
         logger.error('vidxgo maintenance: ' + traceback.format_exc())
-# ---------------------------------------------------------------------------
 
 
 def _send_heartbeat(pos):
     if _net_down():
-        return                             # [NET-FIX] blackout: skip silenzioso
+        return
     try:
         s = _vidxgo_session()
         payload = {"sid": _HB['sid'], "v": 2, "imdb": _PROXY.get('imdb', ''),
@@ -411,12 +460,13 @@ def _send_heartbeat(pos):
         s.post(HOST + '/hb', json=payload,
                headers={'User-Agent': UA_FF, 'Referer': HOST + '/',
                         'Origin': HOST, 'Content-Type': 'application/json',
-                        'Accept': '*/*'}, timeout=10)
+                        'Accept': '*/*'}, timeout=RELAY_CONNECT_TIMEOUT + 1)
+        _net_ok()
     except Exception as e:
-        # [NET-FIX] log compatto anche qui
         if _is_net_error(e):
-            _NET_FAIL[0] = time.time()
-            logger.error('vidxgo hb: rete irraggiungibile, backoff 10s')
+            _net_fail()
+            logger.error('vidxgo hb: rete irraggiungibile (backoff #%d)'
+                         % _NET_FAIL[1])
         else:
             logger.error('vidxgo hb failed: ' + traceback.format_exc())
 
@@ -548,10 +598,9 @@ def _start_proxy():
                     h['Range'] = self.headers['Range']
 
                 now = time.time()
-                # [BG-MAINT] heartbeat e refresh token NON nel thread richiesta
                 need_hb = (now - _PROXY.get('last_hb', 0) >= 50)
                 if need_hb or _maintenance_due():
-                    if now - _BG_MAINT[0] > 2.0:      # max 1 worker / 2s
+                    if now - _BG_MAINT[0] > 2.0:
                         _BG_MAINT[0] = now
                         import threading as _th
                         _th.Thread(target=_maintenance_do,
@@ -563,13 +612,15 @@ def _start_proxy():
                 host_up = urllib.parse.urlparse(_PROXY['base']).netloc
                 sess = _relay_session(_relay_cand_for(host_up))
 
-                # [RATE-FIX] backoff SOLO sulle playlist: i segmenti non
-                # vanno throttlati (era la causa degli "stream stalled")
                 if req_path.lower().endswith('.m3u8'):
                     _ratelimit_wait(host_up)
 
+                req_up = req_path
+                if _PATH_MAP[0] and req_path.startswith(_PATH_MAP[0]):
+                    req_up = _PATH_MAP[1] + req_path[len(_PATH_MAP[0]):]
+
                 if host_up in _RELAY_DIRECT:
-                    durl = _PROXY['base'] + req_path
+                    durl = _PROXY['base'] + req_up
                     if _PROXY.get('fresh_query'):
                         durl += '?' + _PROXY['fresh_query']
                     self.send_response(302)
@@ -593,12 +644,13 @@ def _start_proxy():
                         pass
                     return
 
-                url = _PROXY['base'] + req_path
+                url = _PROXY['base'] + req_up
                 if _PROXY.get('fresh_query'):
                     url += '?' + _PROXY['fresh_query']
 
+                rt = (RELAY_CONNECT_TIMEOUT, RELAY_READ_TIMEOUT)
                 try:
-                    r = sess.get(url, headers=h, timeout=(10, 60), stream=True)
+                    r = sess.get(url, headers=h, timeout=rt, stream=True)
 
                     if r.status_code == 403 and _PROXY.get('t_url') and \
                             (time.time() - _PROXY.get('t0', time.time())) > REFRESH_GRACE:
@@ -606,48 +658,69 @@ def _start_proxy():
                             r.close()
                         except Exception:
                             pass
-                        # retry SINCRONO: qui serve il token nuovo PRIMA di ritentare
                         if _refresh_token():
-                            url = _PROXY['base'] + req_path + '?' + _PROXY['fresh_query']
-                            r = sess.get(url, headers=h, timeout=(10, 60), stream=True)
+                            url = _PROXY['base'] + req_up + '?' + _PROXY['fresh_query']
+                            r = sess.get(url, headers=h, timeout=rt, stream=True)
 
                     if r.status_code in (403, 429):
                         logger.error('vidxgo upstream %s -> HTTP %s: ruoto fingerprint'
                                      % (host_up, r.status_code))
-                        for cand in _TLS_CANDIDATES:
-                            if cand[0] == _relay_cand_for(host_up)[0]:
-                                continue
-                            s2 = _relay_session(cand)
-                            try:
-                                r2 = s2.get(url, headers=h, timeout=(10, 60), stream=True)
-                                if r2.status_code == 200:
-                                    _RELAY_CAND[host_up] = cand[0]
+                        if not _net_down():
+                            for cand in _TLS_CANDIDATES:
+                                if cand[0] == _relay_cand_for(host_up)[0]:
+                                    continue
+                                s2 = _relay_session(cand)
+                                try:
+                                    r2 = s2.get(url, headers=h, timeout=rt, stream=True)
+                                    if r2.status_code == 200:
+                                        _RELAY_CAND[host_up] = cand[0]
+                                        try:
+                                            r.close()
+                                        except Exception:
+                                            pass
+                                        r = r2
+                                        logger.info('vidxgo relay winner [%s] per %s'
+                                                    % (cand[0], host_up))
+                                        break
                                     try:
-                                        r.close()
+                                        r2.close()
                                     except Exception:
                                         pass
-                                    r = r2
-                                    logger.info('vidxgo relay winner [%s] per %s'
-                                                % (cand[0], host_up))
-                                    break
-                                try:
-                                    r2.close()
                                 except Exception:
                                     pass
-                            except Exception:
-                                pass
 
-                        if r.status_code in (403, 429) and host_up not in _RELAY_DIRECT:
-                            _RELAY_DIRECT.add(host_up)
-                            _ratelimit_mark(host_up)
+                    if r.status_code in (403, 429) and host_up not in _RELAY_DIRECT \
+                            and not _HEAL.get('busy') and not _net_down():
+                        _HEAL['busy'] = True
+                        import threading as _th
+
+                        def _heal_worker(host=host_up):
+                            try:
+                                _hot_heal(host)
+                            finally:
+                                _HEAL['busy'] = False
+                        _th.Thread(target=_heal_worker, daemon=True).start()
+                        try:
+                            r.close()
+                        except Exception:
+                            pass
+                        logger.info('vidxgo heal in background (Kodi ritentera)')
+                        self.send_error(503)
+                        return
+
+                    if r.status_code in (403, 429):
+                        cur_host = urllib.parse.urlparse(_PROXY['base']).netloc
+                        if cur_host not in _RELAY_DIRECT:
+                            _RELAY_DIRECT.add(cur_host)
+                            _ratelimit_mark(cur_host)
                             logger.error('vidxgo CDN %s blocca tutte le fingerprint '
-                                         '-> DIRECT mode' % host_up)
+                                         '-> DIRECT mode' % cur_host)
                             try:
                                 r.close()
                             except Exception:
                                 pass
                             _refresh_token()
-                            durl = _PROXY['base'] + req_path
+                            durl = _PROXY['base'] + req_up
                             if _PROXY.get('fresh_query'):
                                 durl += '?' + _PROXY['fresh_query']
                             self.send_response(302)
@@ -656,11 +729,10 @@ def _start_proxy():
                             self.end_headers()
                             return
                 except Exception as e:
-                    # [NET-FIX] anche qui: errore rete = log compatto
                     if _is_net_error(e):
-                        _NET_FAIL[0] = time.time()
-                        logger.error('vidxgo relay: rete irraggiungibile (%s)'
-                                     % str(e)[:100])
+                        _net_fail()
+                        logger.error('vidxgo relay: rete irraggiungibile '
+                                     '(backoff #%d, %s)' % (_NET_FAIL[1], str(e)[:90]))
                     else:
                         logger.error('vidxgo relay exc: %s' % str(e)[:150])
                     try:
@@ -718,9 +790,6 @@ def _start_proxy():
             def log_message(self, *a):
                 pass
 
-        # [PORT-RANDOM] bind su porta effimera: il sistema ne assegna una
-        # libera a ogni play. Nessuna collisione possibile, ma l'URL di
-        # playback cambia a ogni play -> il resume Kodi non viene ritrovato.
         try:
             srv = _Srv(('127.0.0.1', 0), _Handler)
         except Exception:
@@ -915,6 +984,10 @@ def get_video_url(page_url, premium=False, user='', password='', video_password=
         _PROXY['t_url'] = ''
         _PROXY['expire_ms'] = 0
         _PROXY['hb_type'] = 'series' if is_episode else 'movie'
+
+        _HEAL['t'] = 0.0
+        _HEAL['busy'] = False
+        _PATH_MAP[0] = _PATH_MAP[1] = ''
 
         if is_episode:
             candidates = [HOST + '/t/' + '/'.join(path_parts[:3]),
