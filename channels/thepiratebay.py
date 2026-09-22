@@ -46,11 +46,16 @@ def estrai_titolo(title):
     return titolo.strip()
 
 
+def estrai_anno(title):
+    m = re.search(r'[\(\[]?((?:19|20)\d{2})[\)\]]?', title)
+    return m.group(1) if m else ""
+
+
 def categoria_to_contentType(category):
     try:
         cat = int(category)
     except (ValueError, TypeError):
-        return 'undefined'
+        return None
 
     if cat in (201, 202, 204, 207, 209, 211):
         return 'movie'
@@ -58,23 +63,15 @@ def categoria_to_contentType(category):
     if cat in (205, 208, 212):
         return 'tvshow'
 
-    return 'undefined'
-
-
-def is_musica(category):
-    try:
-        cat = int(category)
-    except (ValueError, TypeError):
-        return False
-    return cat in (100, 101, 102, 103, 104, 199)
+    return None
 
 
 def next_page(item):
-    """Gestisce la pagina successiva senza aprire il campo di ricerca."""
     text = getattr(item, 'search', '') or ''
     if not text:
         logger.error("Nessun testo per pagina successiva")
         return []
+    item.args = 'search'
     return search(item, text)
 
 
@@ -82,8 +79,6 @@ def search(item, text):
     if not text:
         if hasattr(item, 'search') and item.search:
             text = item.search
-        elif hasattr(item, 'args') and item.args and isinstance(item.args, str):
-            text = item.args
 
     logger.info("text=" + text)
     itemlist = []
@@ -92,14 +87,20 @@ def search(item, text):
         logger.error("Nessun testo di ricerca")
         return itemlist
 
-    item.args = 'search'
-
     page = item.page if hasattr(item, 'page') and item.page else 0
 
-    if page > 0:
-        api_url = "https://apibay.org/q.php?q=%s:%s" % (urllib.parse.quote(text), page)
+    # Filtro ITA sempre attivo (se impostazione attiva)
+    only_ita = config.get_setting('itaSearch', channel=item.channel, default=False)
+
+    if only_ita and "user:" not in text:
+        search_text = text + ' ita'
     else:
-        api_url = "https://apibay.org/q.php?q=%s" % urllib.parse.quote(text)
+        search_text = text
+
+    if page > 0:
+        api_url = "https://apibay.org/q.php?q=%s:%s" % (urllib.parse.quote(search_text), page)
+    else:
+        api_url = "https://apibay.org/q.php?q=%s" % urllib.parse.quote(search_text)
 
     logger.info("API URL: %s" % api_url)
 
@@ -151,13 +152,15 @@ def search(item, text):
         title_formatted = "%s [S:%s L:%s] [%s]" % (title, seed_color, leech, size)
 
         title_clean = estrai_titolo(title)
+        year = estrai_anno(title)
 
-        if is_musica(category):
+        content_type = categoria_to_contentType(category)
+
+        if content_type is None:
             new_item = item.clone(
                 title=title_formatted,
                 url=magnet,
                 action="findvideos",
-                server="torrent",
                 folder=False,
                 info_hash=info_hash,
                 seeders=seeds,
@@ -165,18 +168,16 @@ def search(item, text):
                 size=size
             )
         else:
-            content_type = categoria_to_contentType(category)
+            is_movie = content_type == 'movie'
 
-            if content_type == 'tvshow':
-                info_labels = {'tvshowtitle': title_clean}
-            else:
-                info_labels = {'title': title_clean}
+            info_labels = {'title': title_clean, 'year': year}
+            if not is_movie:
+                info_labels['tvshowtitle'] = title_clean
 
             new_item = item.clone(
                 title=title_formatted,
                 url=magnet,
                 action="findvideos",
-                server="torrent",
                 folder=False,
                 contentTitle=title_clean,
                 contentType=content_type,
@@ -202,7 +203,7 @@ def search(item, text):
 
     if "user:" in text:
         next_page_num = page + 1
-        check_url = "https://apibay.org/q.php?q=%s:%s" % (urllib.parse.quote(text), next_page_num)
+        check_url = "https://apibay.org/q.php?q=%s:%s" % (urllib.parse.quote(search_text), next_page_num)
         check_data = httptools.downloadpage(check_url).data
 
         if check_data:
